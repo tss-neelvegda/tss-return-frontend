@@ -92,7 +92,8 @@ function AddUserForm({ onAdded }: { onAdded: () => void }) {
 
 function AdminContent() {
   const { user, users, setUserRole, fetchUsers } = useAuth();
-  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [loadingUsers, setLoadingUsers]   = useState(true);
+  const [updatingEmail, setUpdatingEmail] = useState<string | null>(null);
 
   useEffect(() => {
     fetchUsers().finally(() => setLoadingUsers(false));
@@ -151,7 +152,6 @@ function AdminContent() {
               <tr style={{ background: "var(--table-stripe)" }}>
                 <th className="px-3 py-2 text-left text-[10px] font-bold tracking-wider" style={{ color: "var(--text-muted)" }}>EMAIL</th>
                 <th className="px-3 py-2 text-left text-[10px] font-bold tracking-wider" style={{ color: "var(--text-muted)" }}>ROLE</th>
-                <th className="px-3 py-2 text-left text-[10px] font-bold tracking-wider" style={{ color: "var(--text-muted)" }}>LAST LOGIN</th>
                 <th className="px-3 py-2 text-left text-[10px] font-bold tracking-wider" style={{ color: "var(--text-muted)" }}>ACTION</th>
               </tr>
             </thead>
@@ -175,23 +175,31 @@ function AdminContent() {
                         {ROLE_LABEL[u.role]}
                       </span>
                     </td>
-                    <td className="px-3 py-2" style={{ color: "var(--text-secondary)" }}>
-                      {u.lastLogin ? new Date(u.lastLogin).toLocaleString() : "—"}
-                    </td>
                     <td className="px-3 py-2">
                       {isAdmin ? (
                         <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Protected</span>
                       ) : (
                         <button
-                          onClick={() => {
+                          disabled={updatingEmail === u.email}
+                          onClick={async () => {
                             const next = u.role === "privileged_user" ? "normal_user" : "privileged_user";
-                            setUserRole(u.email, next);
-                            toast.success(`${u.email} → ${ROLE_LABEL[next]}`);
+                            setUpdatingEmail(u.email);
+                            const res = await setUserRole(u.email, next);
+                            if (res.ok) {
+                              toast.success(`${u.email} → ${ROLE_LABEL[next]}`);
+                              await fetchUsers();
+                            } else {
+                              toast.error(res.error ?? "Failed to update user.");
+                            }
+                            setUpdatingEmail(null);
                           }}
-                          className="text-[11px] font-bold px-2.5 py-1 rounded-md"
+                          className="flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-md transition-opacity disabled:opacity-60"
                           style={{ border: "1px solid var(--accent-red)", color: "var(--accent-red)" }}
                         >
-                          {u.role === "privileged_user" ? "Demote to Member" : "Promote to Member+"}
+                          {updatingEmail === u.email && <Loader2 size={11} className="animate-spin" />}
+                          {updatingEmail === u.email
+                            ? "Updating…"
+                            : u.role === "privileged_user" ? "Demote to Member" : "Promote to Member+"}
                         </button>
                       )}
                     </td>

@@ -9,7 +9,7 @@ import {
 } from "react";
 
 export type Role = "admin" | "privileged_user" | "normal_user";
-type ApiRole = "ref_admin" | "ref_member";
+type ApiRole = "ref_admin" | "ref_memberplus" | "ref_member";
 
 export type TabKey =
   | "summary"
@@ -22,7 +22,7 @@ export type TabKey =
 export interface KnownUser {
   email: string;
   role: Role;
-  lastLogin?: string;
+  name?: string;
 }
 
 export interface OtpState {
@@ -33,7 +33,6 @@ export interface OtpState {
 interface SessionUser {
   email: string;
   role: Role;
-  lastLogin: string;
 }
 
 interface AuthCtx {
@@ -46,7 +45,7 @@ interface AuthCtx {
   logout: () => void;
   fetchUsers: () => Promise<void>;
   createUser: (email: string, role: Exclude<Role, "admin">) => Promise<{ ok: boolean; error?: string }>;
-  setUserRole: (email: string, role: Exclude<Role, "admin">) => void;
+  setUserRole: (email: string, role: Exclude<Role, "admin">) => Promise<{ ok: boolean; error?: string }>;
   canAccess: (tab: TabKey) => boolean;
 }
 
@@ -93,7 +92,13 @@ function safeRead<T>(key: string, fallback: T): T {
 }
 
 function apiRoleToAppRole(apiRole: ApiRole): Role {
-  return apiRole === "ref_admin" ? "admin" : "normal_user";
+  if (apiRole === "ref_admin")       return "admin";
+  if (apiRole === "ref_memberplus")  return "privileged_user";
+  return "normal_user";
+}
+
+function appRoleToApiRole(role: Exclude<Role, "admin">): ApiRole {
+  return role === "privileged_user" ? "ref_memberplus" : "ref_member";
 }
 
 const LEGACY_DEMO_EMAILS = new Set([
@@ -141,12 +146,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return res.json().then((data: { email: string; role: ApiRole }) => {
           const local = storedUsers.find((u) => u.email === data.email);
           const role  = local?.role ?? apiRoleToAppRole(data.role);
-          const prev  = safeRead<SessionUser | null>(USER_KEY, null);
-          const session: SessionUser = {
-            email: data.email,
-            role,
-            lastLogin: prev?.lastLogin ?? new Date().toISOString(),
-          };
+          const session: SessionUser = { email: data.email, role };
           localStorage.setItem(USER_KEY, JSON.stringify(session));
           setUser(session);
         });
@@ -160,7 +160,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [users, hydrated]);
 
   const requestOtp = useCallback(async (email: string) => {
-    for (const role of ["ref_member", "ref_admin"] as ApiRole[]) {
+    for (const role of ["ref_member", "ref_memberplus", "ref_admin"] as ApiRole[]) {
       const res = await apiPost("/request-otp", { email, role });
       if (res.ok) {
         setOtpPending({ email, role });
@@ -189,19 +189,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const local   = users.find((u) => u.email === data.email);
     const appRole = local?.role ?? apiRoleToAppRole(data.role);
-    const session: SessionUser = {
-      email: data.email,
-      role: appRole,
-      lastLogin: new Date().toISOString(),
-    };
+    const session: SessionUser = { email: data.email, role: appRole };
     localStorage.setItem(USER_KEY, JSON.stringify(session));
     setUser(session);
     setOtpPending(null);
 
     setUsers((prev) => {
       const exists = prev.find((u) => u.email === data.email);
-      if (exists) return prev.map((u) => u.email === data.email ? { ...u, lastLogin: session.lastLogin } : u);
-      return [...prev, { email: data.email, role: appRole, lastLogin: session.lastLogin }];
+      if (exists) return prev;
+      return [...prev, { email: data.email, role: appRole }];
     });
 
     return { ok: true };
@@ -212,24 +208,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const fetchUsers = useCallback(async () => {
     try {
       const res = await apiGet("/users");
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.error("fetchUsers: non-OK response", res.status);
+        return;
+      }
       const raw = await res.json();
-      const list: Array<{ email: string; role: ApiRole }> = Array.isArray(raw)
+      const list: Array<{ email: string; role: ApiRole; name?: string }> = Array.isArray(raw)
         ? raw
-        : Array.isArray(raw?.users) ? raw.users : [];
-      if (list.length === 0) return;
-      setUsers((prev) => list.map((u) => {
-        const local = prev.find((l) => l.email === u.email);
-        const role: Role = u.role === "ref_admin" ? "admin" : (local?.role ?? "normal_user");
-        return { email: u.email, role, lastLogin: local?.lastLogin };
-      }));
-    } catch {
-      // network error — leave existing users state intact
+        : Array.isArray(raw?.data) ? raw.data
+        : Array.isArray(raw?.users) ? raw.users
+        : [];
+      setUsers(list.map((u) => ({ email: u.email, role: apiRoleToAppRole(u.role), name: u.name })));
+    } catch (err) {
+      console.error("fetchUsers: network error", err);
     }
   }, []);
 
   const createUser = useCallback(async (email: string, appRole: Exclude<Role, "admin">) => {
-    const res = await apiPost("/users", { email, role: "ref_member", name: email });
+    const res = await apiPost("/users", { email, role: appRoleToApiRole(appRole), name: email });
     if (!res.ok) {
       const data = await res.json().catch(() => ({})) as { message?: string };
       return { ok: false, error: data.message ?? "Failed to create user." };
@@ -249,7 +245,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     apiPost("/logout", {}).catch(() => {});
   }, []);
 
-  const setUserRole = useCallback((email: string, role: Exclude<Role, "admin">) => {
+  const setUserRole = useCallback(async (email: string, role: Exclude<Role, "admin">) => {
+    const existing = users.find((u) => u.email === email);
+    const name     = existing?.name ?? email;
+    const res = await apiPost("/users", { email, role: appRoleToApiRole(role), name });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({})) as { message?: string };
+      return { ok: false, error: data.message ?? "Failed to update user." };
+    }
     setUsers((prev) =>
       prev.map((u) => (u.role === "admin" || u.email !== email ? u : { ...u, role })),
     );
@@ -259,7 +262,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem(USER_KEY, JSON.stringify(updated));
       return updated;
     });
-  }, []);
+    return { ok: true };
+  }, [users]);
 
   // Only the admin tab requires admin role — all other tabs are open to everyone
   const canAccess = useCallback(
