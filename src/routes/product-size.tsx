@@ -5,9 +5,10 @@ import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from "recha
 import { Download } from "lucide-react";
 import { DashboardShell } from "@/components/tss/DashboardShell";
 import { useFilters } from "@/lib/filters/FilterContext";
-import { useSizeDistribution, useProductSizeHeatmap } from "@/hooks/useDashboardData";
+import {
+  useInsightBreakdown, useProductSizeHeatmap, useSizeDistribution,
+} from "@/hooks/useDashboardData";
 import { exportTableCsv } from "@/lib/exportCsv";
-import { ZoomableChart } from "@/components/tss/ZoomableChart";
 
 export const Route = createFileRoute("/product-size")({
   component: () => (
@@ -27,7 +28,18 @@ const GROUP_SIZE_ORDER: Record<GroupKey, string[]> = {
   ACCESSORIES: ["FREESIZE"],
 };
 
-const COLORS = ["var(--accent-red)","var(--accent-teal)","var(--accent-blue)","var(--accent-purple)","var(--accent-amber)","var(--accent-pink)"];
+const DONUT_COLORS = [
+  "var(--accent-red)",
+  "var(--accent-blue)",
+  "var(--accent-teal)",
+  "var(--accent-amber)",
+  "var(--accent-purple)",
+  "var(--accent-pink)",
+  "#ef9a9a",
+  "#64b5f6",
+  "#bdbdbd",
+  "#90caf9",
+];
 
 function heatColor(v: number, max: number) {
   if (!v) return "transparent";
@@ -47,6 +59,11 @@ function ProductSizeContent() {
 
   const { data: sizeData = [] } = useSizeDistribution(filters);
   const { data: heatmapRaw = [], isLoading: heatLoading } = useProductSizeHeatmap(filters, group);
+  const { data: reasonRows = [] } = useInsightBreakdown(filters, group, "reason");
+
+  const reasonChartData = reasonRows
+    .slice(0, 10)
+    .map((r, i) => ({ name: r.label, value: r.cnt, color: DONUT_COLORS[i % DONUT_COLORS.length] }));
 
   // Build size group tiles from size distribution
   const groupTotals = useMemo(() => {
@@ -89,6 +106,12 @@ function ProductSizeContent() {
     return { heatRows, sizeCols };
   }, [heatmapRaw, group]);
 
+  const productCategoryData = SIZE_GROUPS.map((g, i) => ({
+    name: g.charAt(0) + g.slice(1).toLowerCase(),
+    value: groupTotals[g]?.total ?? 0,
+    color: ["var(--accent-red)", "var(--accent-blue)", "var(--accent-purple)", "var(--accent-teal)"][i],
+  })).filter((d) => d.value > 0);
+
   const filtered = heatRows.filter((r) => r.product.toLowerCase().includes(search.toLowerCase()));
   const max = Math.max(...heatRows.flatMap((r) => sizeCols.map((c) => (r[c] as number) || 0)), 1);
 
@@ -103,12 +126,6 @@ function ProductSizeContent() {
       `tss_product_size_${group.toLowerCase()}_${filters.dateFrom}_${filters.dateTo}.csv`,
     );
   }
-
-  // Build reason donut from cat_l1 grouping — here we show size distribution as a stand-in
-  const groupSizes = groupTotals[group]?.sizes ?? [];
-  const donutData = groupSizes.slice(0, 6).map((([sz, cnt], i) => ({
-    name: sz, value: cnt, color: COLORS[i % COLORS.length],
-  })));
 
   return (
     <div className="space-y-4">
@@ -224,23 +241,43 @@ function ProductSizeContent() {
         </div>
       </div>
 
-      {/* Size distribution donut */}
-      <div className="tss-card p-5">
-        <div className="text-[12px] font-bold tracking-wider mb-1">SIZE DISTRIBUTION — {group}</div>
-        <div className="text-[11px] mb-2" style={{ color: "var(--text-secondary)" }}>Top sizes by return count</div>
-        <ZoomableChart baseHeight={280}>
-          {(h) => (
-            <ResponsiveContainer width="100%" height={h}>
-              <PieChart>
-                <Pie data={donutData} dataKey="value" innerRadius={70} outerRadius={110} paddingAngle={1}>
-                  {donutData.map((d, i) => <Cell key={i} fill={d.color} />)}
-                </Pie>
-                <Tooltip formatter={(v: number) => v.toLocaleString()} />
-                <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
-              </PieChart>
-            </ResponsiveContainer>
+      {/* Return Reasons + Product Category */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="tss-card p-5">
+          <div className="text-[12px] font-bold tracking-wider mb-1">RETURN REASONS</div>
+          <div className="text-[11px] mb-3" style={{ color: "var(--text-secondary)" }}>
+            Top reasons in {group.charAt(0) + group.slice(1).toLowerCase()}
+          </div>
+          <ResponsiveContainer width="100%" height={320}>
+            <PieChart>
+              <Pie data={reasonChartData} dataKey="value" nameKey="name" innerRadius="42%" outerRadius="72%" paddingAngle={1}>
+                {reasonChartData.map((d, i) => <Cell key={i} fill={d.color} />)}
+              </Pie>
+              <Tooltip formatter={(v: number) => v.toLocaleString()} />
+              <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
+            </PieChart>
+          </ResponsiveContainer>
+          {reasonChartData.length === 0 && (
+            <div className="text-[12px] py-6 text-center" style={{ color: "var(--text-muted)" }}>No data</div>
           )}
-        </ZoomableChart>
+        </div>
+
+        <div className="tss-card p-5">
+          <div className="text-[12px] font-bold tracking-wider mb-1">PRODUCT CATEGORY</div>
+          <div className="text-[11px] mb-3" style={{ color: "var(--text-secondary)" }}>Returns by size group</div>
+          <ResponsiveContainer width="100%" height={320}>
+            <PieChart>
+              <Pie data={productCategoryData} dataKey="value" nameKey="name" innerRadius="42%" outerRadius="72%" paddingAngle={1}>
+                {productCategoryData.map((d, i) => <Cell key={i} fill={d.color} />)}
+              </Pie>
+              <Tooltip formatter={(v: number) => v.toLocaleString()} />
+              <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
+            </PieChart>
+          </ResponsiveContainer>
+          {productCategoryData.length === 0 && (
+            <div className="text-[12px] py-6 text-center" style={{ color: "var(--text-muted)" }}>No data</div>
+          )}
+        </div>
       </div>
     </div>
   );

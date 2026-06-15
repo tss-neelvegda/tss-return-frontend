@@ -3,7 +3,10 @@ import { motion } from "framer-motion";
 import { useState } from "react";
 import { DashboardShell } from "@/components/tss/DashboardShell";
 import { useFilters } from "@/lib/filters/FilterContext";
-import { useRootCauseL1, useRootCauseL2, useRootCauseL3, type CatCount } from "@/hooks/useDashboardData";
+import {
+  useInsightsSummary, useRootCauseL1, useRootCauseL2, useRootCauseL3,
+  type CatCount,
+} from "@/hooks/useDashboardData";
 
 export const Route = createFileRoute("/root-cause")({
   component: () => (
@@ -78,14 +81,24 @@ function Quadrant({
 
 function RootCauseContent() {
   const { filters } = useFilters();
+  const [selSg, setSelSg] = useState<string | null>(null);
   const [selL1, setSelL1] = useState<string | null>(null);
   const [selL2, setSelL2] = useState<string | null>(null);
   const [selL3, setSelL3] = useState<string | null>(null);
 
-  const { data: l1Data = [], isLoading: l1Loading } = useRootCauseL1(filters);
-  const { data: l2Data = [], isLoading: l2Loading } = useRootCauseL2(filters, selL1);
-  const { data: l3Data = [], isLoading: l3Loading } = useRootCauseL3(filters, selL2);
+  const { data: insightsRows = [], isLoading: sgLoading } = useInsightsSummary(filters);
+  const { data: l1Data = [], isLoading: l1Loading } = useRootCauseL1(filters, selSg);
+  const { data: l2Data = [], isLoading: l2Loading } = useRootCauseL2(filters, selL1, selSg);
+  const { data: l3Data = [], isLoading: l3Loading } = useRootCauseL3(filters, selL2, selSg);
 
+  const sgItems: CatCount[] = insightsRows.map((r) => ({ cat: r.size_group, cnt: r.total }));
+
+  function selectSg(name: string) {
+    setSelSg((prev) => (prev === name ? null : name));
+    setSelL1(null);
+    setSelL2(null);
+    setSelL3(null);
+  }
   function selectL1(name: string) {
     setSelL1((prev) => (prev === name ? null : name));
     setSelL2(null);
@@ -102,51 +115,28 @@ function RootCauseContent() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <Quadrant
-        n={1} title="RETURN REASON" badge="L1" color="var(--accent-red)"
-        items={l1Data} isLoading={l1Loading}
-        selected={selL1} onSelect={selectL1}
+        n={1} title="PRODUCT CATEGORY" badge="SG" color="var(--accent-blue)"
+        items={sgItems} isLoading={sgLoading}
+        selected={selSg} onSelect={selectSg}
       />
       <Quadrant
-        n={2} title="ISSUE AREA" badge="L2" color="var(--accent-purple)"
+        n={2} title="L1" badge="L1" color="var(--accent-red)"
+        items={l1Data} isLoading={l1Loading}
+        selected={selL1} onSelect={selectL1}
+        dim={!selSg}
+      />
+      <Quadrant
+        n={3} title="L2" badge="L2" color="var(--accent-purple)"
         items={l2Data} isLoading={l2Loading}
         selected={selL2} onSelect={selectL2}
         dim={!selL1}
       />
       <Quadrant
-        n={3} title="SPECIFIC ISSUE" badge="L3" color="var(--accent-amber)"
+        n={4} title="L3" badge="L3" color="var(--accent-amber)"
         items={l3Data} isLoading={l3Loading}
         selected={selL3} onSelect={selectL3}
         dim={!selL2}
       />
-      {/* Summary panel */}
-      <div className="tss-card p-5">
-        <div className="text-[12px] font-bold tracking-wider mb-3">SELECTION SUMMARY</div>
-        {!selL1 ? (
-          <p className="text-[12px]" style={{ color: "var(--text-secondary)" }}>Select a Return Reason to explore the hierarchy.</p>
-        ) : (
-          <div className="space-y-3 text-[12px]">
-            <div>
-              <div className="text-[10px] font-bold tracking-wider mb-1" style={{ color: "var(--text-muted)" }}>RETURN REASON (L1)</div>
-              <div className="font-semibold">{selL1}</div>
-              <div style={{ color: "var(--accent-red)" }}>{l1Data.find(d => d.cat === selL1)?.cnt.toLocaleString()} records</div>
-            </div>
-            {selL2 && (
-              <div>
-                <div className="text-[10px] font-bold tracking-wider mb-1" style={{ color: "var(--text-muted)" }}>ISSUE AREA (L2)</div>
-                <div className="font-semibold">{selL2}</div>
-                <div style={{ color: "var(--accent-purple)" }}>{l2Data.find(d => d.cat === selL2)?.cnt.toLocaleString()} records</div>
-              </div>
-            )}
-            {selL3 && (
-              <div>
-                <div className="text-[10px] font-bold tracking-wider mb-1" style={{ color: "var(--text-muted)" }}>SPECIFIC ISSUE (L3)</div>
-                <div className="font-semibold">{selL3}</div>
-                <div style={{ color: "var(--accent-amber)" }}>{l3Data.find(d => d.cat === selL3)?.cnt.toLocaleString()} records</div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
     </div>
   );
 }

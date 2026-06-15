@@ -1,16 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import {
-  Bar, BarChart, Brush, Cell, Legend, Pie, PieChart,
+  Bar, BarChart, Brush, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis, Area, AreaChart,
 } from "recharts";
 import { DashboardShell } from "@/components/tss/DashboardShell";
 import { ZoomableChart } from "@/components/tss/ZoomableChart";
 import { CountUp } from "@/components/tss/CountUp";
+import { InsightsPanel } from "@/components/tss/InsightsPanel";
 import { useFilters } from "@/lib/filters/FilterContext";
 import {
   useSummaryTotals, useTopCategories, useTopProducts,
-  useReturnsTimeline, useOutcomeDistribution,
+  useReturnsTimeline, useOutcomeDistribution, useResolutionDistribution,
+  useDailySummary,
 } from "@/hooks/useDashboardData";
 
 export const Route = createFileRoute("/overview")({
@@ -54,6 +56,17 @@ function OverviewContent() {
   const { data: products = [] } = useTopProducts(filters);
   const { data: timeline = [] } = useReturnsTimeline(filters);
   const { data: outcomes = [] } = useOutcomeDistribution(filters);
+  const { data: resolutions = [] } = useResolutionDistribution(filters);
+  const { data: dailyRows = [] } = useDailySummary(filters);
+  const returnedItems = resolutions.find((r) => r.resolution === "RETURN")?.cnt ?? 0;
+
+  const tvcData = [...dailyRows]
+    .reverse()
+    .map((r) => ({
+      date: r.date,
+      triggered: r.total_triggered,
+      connected: r.full_completion + r.partial_completion + r.cpnf,
+    }));
 
   const t = totals ?? {
     total_triggered: 0, full_completion: 0, partial_completion: 0,
@@ -67,14 +80,13 @@ function OverviewContent() {
   const pct = (n: number) => t.total_triggered > 0 ? (n / t.total_triggered * 100).toFixed(1) + "%" : "0%";
 
   const kpis = [
-    { label: "Total Calls",     value: t.total_triggered,   sub: "Triggered in period",          color: "var(--accent-red)" },
-    { label: "Full",            value: t.full_completion,   sub: pct(t.full_completion) + " of calls", color: "var(--accent-teal)" },
+    { label: "Total Calls",     value: t.total_triggered,    sub: "Triggered in period",                  color: "var(--accent-red)" },
+    { label: "Connected",       value: connectedTotal,       sub: pct(connectedTotal) + " of calls",      color: "var(--accent-blue)" },
+    { label: "Returned Items",  value: returnedItems,        sub: "Resolution = Return",                  color: "var(--accent-teal)" },
+    { label: "Full",            value: t.full_completion,    sub: pct(t.full_completion) + " of calls",   color: "var(--accent-teal)" },
     { label: "Partial",         value: t.partial_completion, sub: pct(t.partial_completion) + " of calls", color: "#ef9a9a" },
-    { label: "No Feedback",     value: t.cpnf,               sub: pct(t.cpnf) + " of calls",     color: "var(--accent-amber)" },
-    { label: "Connected",       value: connectedTotal,       sub: pct(connectedTotal) + " of calls", color: "var(--accent-blue)" },
-    { label: "Not Connected",   value: t.not_connected,      sub: pct(notConnTotal) + " w/ no answer", color: "var(--accent-gray, #9e9e9e)" },
-    { label: "Callback",        value: t.callback_requested + t.callback_no_time, sub: "Mixed outcome", color: "var(--accent-purple)" },
-    { label: "Out of Scope",    value: t.out_of_scope,       sub: "Unrelated calls",              color: "var(--accent-pink)" },
+    { label: "No Feedback",     value: t.cpnf,               sub: pct(t.cpnf) + " of calls",              color: "var(--accent-amber)" },
+    { label: "Not Connected",   value: notConnTotal,         sub: pct(notConnTotal) + " of calls",        color: "var(--accent-gray, #9e9e9e)" },
   ];
 
   const donutData = outcomes.map((o) => ({
@@ -98,7 +110,7 @@ function OverviewContent() {
   return (
     <div className="space-y-4">
       {/* KPI cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
         {kpis.map((k, i) => (
           <motion.div
             key={k.label}
@@ -118,28 +130,34 @@ function OverviewContent() {
       {/* Charts row 1 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <ChartCard title="OUTCOMES" subtitle="Distribution of call outcomes">
-          <ZoomableChart baseHeight={280}>
+          <ZoomableChart baseHeight={400}>
             {(h) => (
               <ResponsiveContainer width="100%" height={h}>
                 <PieChart>
-                  <Pie data={donutData} dataKey="value" innerRadius={60} outerRadius={100} paddingAngle={1}>
+                  <Pie data={donutData} dataKey="value" innerRadius="42%" outerRadius="72%" paddingAngle={1}>
                     {donutData.map((d, i) => <Cell key={i} fill={d.color} />)}
                   </Pie>
                   <Tooltip formatter={(v: number) => v.toLocaleString()} />
-                  <Legend iconType="circle" wrapperStyle={{ fontSize: 10 }} />
+                  <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
                 </PieChart>
               </ResponsiveContainer>
             )}
           </ZoomableChart>
         </ChartCard>
 
-        <ChartCard title="TOP 10 CATEGORIES" subtitle="By return count">
-          <ZoomableChart baseHeight={280}>
+        <ChartCard title="TOP 10 CATEGORIES" subtitle="L1 categories · by return count">
+          <ZoomableChart baseHeight={400}>
             {(h) => (
               <ResponsiveContainer width="100%" height={h}>
-                <BarChart data={catData} layout="vertical" margin={{ left: 10, right: 20 }}>
-                  <XAxis type="number" tick={{ fontSize: 10, fill: "var(--text-muted)" }} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: "var(--text-secondary)" }} width={130} />
+                <BarChart data={catData} layout="vertical" margin={{ left: 10, right: 24, top: 4, bottom: 4 }} barCategoryGap="22%">
+                  <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    tick={{ fontSize: 12, fill: "var(--text-primary)", fontWeight: 500 }}
+                    width={170}
+                    tickFormatter={(v: string) => (v.length > 22 ? v.slice(0, 20) + "…" : v)}
+                  />
                   <Tooltip formatter={(v: number) => v.toLocaleString()} />
                   <Bar dataKey="count" fill="var(--accent-red)" radius={[0, 4, 4, 0]} animationDuration={900} />
                 </BarChart>
@@ -149,12 +167,18 @@ function OverviewContent() {
         </ChartCard>
 
         <ChartCard title="TOP 10 PRODUCTS" subtitle="By return count">
-          <ZoomableChart baseHeight={280}>
+          <ZoomableChart baseHeight={400}>
             {(h) => (
               <ResponsiveContainer width="100%" height={h}>
-                <BarChart data={prodData} layout="vertical" margin={{ left: 10, right: 20 }}>
-                  <XAxis type="number" tick={{ fontSize: 10, fill: "var(--text-muted)" }} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: "var(--text-secondary)" }} width={150} />
+                <BarChart data={prodData} layout="vertical" margin={{ left: 10, right: 24, top: 4, bottom: 4 }} barCategoryGap="22%">
+                  <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    tick={{ fontSize: 12, fill: "var(--text-primary)", fontWeight: 500 }}
+                    width={200}
+                    tickFormatter={(v: string) => (v.length > 26 ? v.slice(0, 24) + "…" : v)}
+                  />
                   <Tooltip formatter={(v: number) => v.toLocaleString()} />
                   <Bar dataKey="count" radius={[0, 4, 4, 0]} animationDuration={900}>
                     {prodData.map((_, i) => <Cell key={i} fill={i === 0 ? "var(--accent-pink)" : "var(--accent-red)"} />)}
@@ -167,7 +191,7 @@ function OverviewContent() {
       </div>
 
       {/* Charts row 2 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <ChartCard title="RETURNS OVER TIME" subtitle="Daily call record count · drag brush to select range">
           <ZoomableChart baseHeight={300}>
             {(h) => (
@@ -213,7 +237,27 @@ function OverviewContent() {
             )}
           </ZoomableChart>
         </ChartCard>
+
+        <ChartCard title="DAILY TRIGGERED VS CONNECTED" subtitle="Per-day comparison">
+          <ZoomableChart baseHeight={260}>
+            {(h) => (
+              <ResponsiveContainer width="100%" height={h}>
+                <LineChart data={tvcData} margin={{ left: 4, right: 12, top: 8, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: "var(--text-muted)" }} interval="preserveStartEnd" />
+                  <YAxis tick={{ fontSize: 10, fill: "var(--text-muted)" }} />
+                  <Tooltip formatter={(v: number) => v.toLocaleString()} />
+                  <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
+                  <Line type="monotone" dataKey="triggered" name="Triggered" stroke="var(--accent-red)"  strokeWidth={2} dot={{ r: 2 }} animationDuration={900} />
+                  <Line type="monotone" dataKey="connected" name="Connected" stroke="var(--accent-blue)" strokeWidth={2} dot={{ r: 2 }} animationDuration={900} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </ZoomableChart>
+        </ChartCard>
       </div>
+
+      <InsightsPanel />
     </div>
   );
 }

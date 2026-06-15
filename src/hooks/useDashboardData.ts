@@ -36,13 +36,37 @@ export interface SummaryTotals {
   failed_calls: number;
 }
 
-export interface CategoryCount  { category: string; cnt: number }
-export interface ProductCount   { product:  string; cnt: number }
-export interface TimelinePoint  { day: string;      cnt: number }
-export interface OutcomeCount   { outcome:  string; cnt: number }
-export interface SizePoint      { sg: string; sz: string; cnt: number }
-export interface HeatmapPoint   { product: string; sz: string; cnt: number }
-export interface CatCount       { cat: string; cnt: number }
+export interface CategoryCount   { category: string; cnt: number }
+export interface ProductCount    { product:  string; cnt: number }
+export interface TimelinePoint   { day: string;      cnt: number }
+export interface OutcomeCount    { outcome:  string; cnt: number }
+export interface ResolutionCount { resolution: string; cnt: number }
+export interface ResolutionDailyRow { day: string; return_cnt: number; exchange_cnt: number; cancel_cnt: number }
+
+export interface InsightsSummaryRow {
+  size_group: string;
+  total: number;
+  top_reason: string | null;       top_reason_cnt: number;
+  top_size: string | null;         top_size_cnt: number;
+  top_product: string | null;      top_product_cnt: number;
+  peak_day: string | null;         peak_day_cnt: number;
+  daily_avg: number;
+}
+
+export interface InsightBreakdownRow { label: string; cnt: number }
+export type InsightDimension = "reason" | "size" | "product" | "day";
+
+export interface ProductReasonMonthlyRow {
+  product_name: string | null;
+  cat_l1: string | null;
+  cat_l2: string | null;
+  cat_l3: string | null;
+  ym: string;
+  cnt: number;
+}
+export interface SizePoint       { sg: string; sz: string; cnt: number }
+export interface HeatmapPoint    { product: string; sz: string; cnt: number }
+export interface CatCount        { cat: string; cnt: number }
 
 export interface CallRecord {
   id: number;
@@ -194,6 +218,104 @@ export function useOutcomeDistribution(filters: Filters) {
   });
 }
 
+/** Resolution distribution (RETURN / EXCHANGE / CANCEL) */
+export function useResolutionDistribution(filters: Filters) {
+  const outcomes = resolveOutcomes(filters.outcomes);
+  return useQuery({
+    queryKey: ["resolutionDist", filters.dateFrom, filters.dateTo, filters.outcomes],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_resolution_distribution", {
+        from_date: filters.dateFrom,
+        to_date:   filters.dateTo,
+        outcomes,
+      });
+      if (error) throw error;
+      return (data ?? []).map((d: Record<string, unknown>) => ({
+        resolution: String(d.resolution ?? ""),
+        cnt: n(d.cnt),
+      })) as ResolutionCount[];
+    },
+  });
+}
+
+/** Per-size-group insight cards (top reason / size / product / peak day) */
+export function useInsightsSummary(filters: Filters) {
+  const outcomes = resolveOutcomes(filters.outcomes);
+  return useQuery({
+    queryKey: ["insightsSummary", filters.dateFrom, filters.dateTo, filters.outcomes],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_insights_summary", {
+        from_date: filters.dateFrom,
+        to_date:   filters.dateTo,
+        outcomes,
+      });
+      if (error) throw error;
+      return (data ?? []).map((d: Record<string, unknown>) => ({
+        size_group:       String(d.size_group ?? ""),
+        total:            n(d.total),
+        top_reason:       (d.top_reason as string | null) ?? null,
+        top_reason_cnt:   n(d.top_reason_cnt),
+        top_size:         (d.top_size as string | null) ?? null,
+        top_size_cnt:     n(d.top_size_cnt),
+        top_product:      (d.top_product as string | null) ?? null,
+        top_product_cnt:  n(d.top_product_cnt),
+        peak_day:         (d.peak_day as string | null) ?? null,
+        peak_day_cnt:     n(d.peak_day_cnt),
+        daily_avg:        n(d.daily_avg),
+      })) as InsightsSummaryRow[];
+    },
+  });
+}
+
+/** Full ranked breakdown for one (size_group, dimension) — used by the insight modal */
+export function useInsightBreakdown(
+  filters: Filters,
+  sg: string | null,
+  dimension: InsightDimension | null,
+) {
+  const outcomes = resolveOutcomes(filters.outcomes);
+  return useQuery({
+    queryKey: ["insightBreakdown", filters.dateFrom, filters.dateTo, sg, dimension, filters.outcomes],
+    enabled: !!sg && !!dimension,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_insight_breakdown", {
+        from_date: filters.dateFrom,
+        to_date:   filters.dateTo,
+        sg:        sg!,
+        dimension: dimension!,
+        outcomes,
+      });
+      if (error) throw error;
+      return (data ?? []).map((d: Record<string, unknown>) => ({
+        label: String(d.label ?? ""),
+        cnt:   n(d.cnt),
+      })) as InsightBreakdownRow[];
+    },
+  });
+}
+
+/** Daily resolution counts (per-day RETURN / EXCHANGE / CANCEL) */
+export function useResolutionDaily(filters: Filters) {
+  const outcomes = resolveOutcomes(filters.outcomes);
+  return useQuery({
+    queryKey: ["resolutionDaily", filters.dateFrom, filters.dateTo, filters.outcomes],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_resolution_daily", {
+        from_date: filters.dateFrom,
+        to_date:   filters.dateTo,
+        outcomes,
+      });
+      if (error) throw error;
+      return (data ?? []).map((d: Record<string, unknown>) => ({
+        day:          String(d.day ?? ""),
+        return_cnt:   n(d.return_cnt),
+        exchange_cnt: n(d.exchange_cnt),
+        cancel_cnt:   n(d.cancel_cnt),
+      })) as ResolutionDailyRow[];
+    },
+  });
+}
+
 /** Size distribution across all groups */
 export function useSizeDistribution(filters: Filters) {
   const outcomes = resolveOutcomes(filters.outcomes);
@@ -237,16 +359,18 @@ export function useProductSizeHeatmap(filters: Filters, sizeGroup: string | null
   });
 }
 
-/** Root cause L1 (cat_l1) counts */
-export function useRootCauseL1(filters: Filters) {
+/** Root cause L1 (cat_l1), optionally scoped to a size_group */
+export function useRootCauseL1(filters: Filters, sg: string | null = null) {
   const outcomes = resolveOutcomes(filters.outcomes);
   return useQuery({
-    queryKey: ["rcL1", filters.dateFrom, filters.dateTo, filters.outcomes],
+    queryKey: ["rcL1", filters.dateFrom, filters.dateTo, sg, filters.outcomes],
+    enabled: sg !== undefined,
     queryFn: async () => {
       const { data, error } = await supabase.rpc("get_root_cause_l1", {
         from_date: filters.dateFrom,
         to_date:   filters.dateTo,
         outcomes,
+        sg,
       });
       if (error) throw error;
       return (data ?? []).map((d: Record<string, unknown>) => ({
@@ -257,11 +381,11 @@ export function useRootCauseL1(filters: Filters) {
   });
 }
 
-/** Root cause L2 counts, filtered by selected L1 */
-export function useRootCauseL2(filters: Filters, l1: string | null) {
+/** Root cause L2 counts, filtered by L1 and optionally by size_group */
+export function useRootCauseL2(filters: Filters, l1: string | null, sg: string | null = null) {
   const outcomes = resolveOutcomes(filters.outcomes);
   return useQuery({
-    queryKey: ["rcL2", filters.dateFrom, filters.dateTo, l1, filters.outcomes],
+    queryKey: ["rcL2", filters.dateFrom, filters.dateTo, l1, sg, filters.outcomes],
     enabled: !!l1,
     queryFn: async () => {
       const { data, error } = await supabase.rpc("get_root_cause_l2", {
@@ -269,6 +393,7 @@ export function useRootCauseL2(filters: Filters, l1: string | null) {
         to_date:   filters.dateTo,
         l1:        l1!,
         outcomes,
+        sg,
       });
       if (error) throw error;
       return (data ?? []).map((d: Record<string, unknown>) => ({
@@ -279,11 +404,11 @@ export function useRootCauseL2(filters: Filters, l1: string | null) {
   });
 }
 
-/** Root cause L3 counts, filtered by selected L2 */
-export function useRootCauseL3(filters: Filters, l2: string | null) {
+/** Root cause L3 counts, filtered by L2 and optionally by size_group */
+export function useRootCauseL3(filters: Filters, l2: string | null, sg: string | null = null) {
   const outcomes = resolveOutcomes(filters.outcomes);
   return useQuery({
-    queryKey: ["rcL3", filters.dateFrom, filters.dateTo, l2, filters.outcomes],
+    queryKey: ["rcL3", filters.dateFrom, filters.dateTo, l2, sg, filters.outcomes],
     enabled: !!l2,
     queryFn: async () => {
       const { data, error } = await supabase.rpc("get_root_cause_l3", {
@@ -291,12 +416,38 @@ export function useRootCauseL3(filters: Filters, l2: string | null) {
         to_date:   filters.dateTo,
         l2:        l2!,
         outcomes,
+        sg,
       });
       if (error) throw error;
       return (data ?? []).map((d: Record<string, unknown>) => ({
         cat: String(d.cat ?? ""),
         cnt: n(d.cnt),
       })) as CatCount[];
+    },
+  });
+}
+
+/** All-records pivot: counts by (product, cat_l1, cat_l2, cat_l3, year-month) */
+export function useProductReasonMonthly(filters: Filters, search: string) {
+  const outcomes = resolveOutcomes(filters.outcomes);
+  return useQuery({
+    queryKey: ["productReasonMonthly", filters.dateFrom, filters.dateTo, search, filters.outcomes],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_product_reason_monthly", {
+        from_date:   filters.dateFrom,
+        to_date:     filters.dateTo,
+        search_term: search || null,
+        outcomes,
+      });
+      if (error) throw error;
+      return (data ?? []).map((d: Record<string, unknown>) => ({
+        product_name: (d.product_name as string | null) ?? null,
+        cat_l1:       (d.cat_l1 as string | null) ?? null,
+        cat_l2:       (d.cat_l2 as string | null) ?? null,
+        cat_l3:       (d.cat_l3 as string | null) ?? null,
+        ym:           String(d.ym ?? ""),
+        cnt:          n(d.cnt),
+      })) as ProductReasonMonthlyRow[];
     },
   });
 }
