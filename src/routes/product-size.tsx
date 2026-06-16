@@ -4,11 +4,21 @@ import { useMemo, useState } from "react";
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { Download } from "lucide-react";
 import { DashboardShell } from "@/components/tss/DashboardShell";
+import { ProductInsightsPanel } from "@/components/tss/ProductInsightsPanel";
+import { ProductSizeReasonsModal } from "@/components/tss/ProductSizeReasonsModal";
 import { useFilters } from "@/lib/filters/FilterContext";
 import {
   useInsightBreakdown, useProductSizeHeatmap, useSizeDistribution,
 } from "@/hooks/useDashboardData";
 import { exportTableCsv } from "@/lib/exportCsv";
+import { normalizeProductName } from "@/lib/utils";
+
+const GROUP_COLORS: Record<string, string> = {
+  APPAREL:     "var(--accent-red)",
+  BOTTOMWEAR:  "var(--accent-blue)",
+  FOOTWEAR:    "var(--accent-purple)",
+  ACCESSORIES: "var(--accent-teal)",
+};
 
 export const Route = createFileRoute("/product-size")({
   component: () => (
@@ -56,6 +66,8 @@ function ProductSizeContent() {
   const { filters } = useFilters();
   const [group, setGroup] = useState<GroupKey>("APPAREL");
   const [search, setSearch] = useState("");
+  const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
+  const [sizeCellPick, setSizeCellPick] = useState<{ product: string; size: string } | null>(null);
 
   const { data: sizeData = [] } = useSizeDistribution(filters);
   const { data: heatmapRaw = [], isLoading: heatLoading } = useProductSizeHeatmap(filters, group);
@@ -85,14 +97,18 @@ function ProductSizeContent() {
   }, [sizeData]);
 
   // Build heatmap: product → size → count
+  // Collapse per-size variant rows ("Foo - Variant ( 32 )", "Foo - Variant ( 34 )")
+  // into one row per base product, summing counts across all variants.
   const { heatRows, sizeCols } = useMemo(() => {
     const order = GROUP_SIZE_ORDER[group] ?? [];
     const productMap = new Map<string, Record<string, number>>();
     const sizeSet = new Set<string>();
 
     for (const row of heatmapRaw) {
-      if (!productMap.has(row.product)) productMap.set(row.product, {});
-      productMap.get(row.product)![row.sz] = row.cnt;
+      const p = normalizeProductName(row.product);
+      if (!productMap.has(p)) productMap.set(p, {});
+      const sizes = productMap.get(p)!;
+      sizes[row.sz] = (sizes[row.sz] ?? 0) + row.cnt;
       sizeSet.add(row.sz);
     }
 
@@ -139,7 +155,7 @@ function ProductSizeContent() {
             return (
               <button
                 key={g}
-                onClick={() => setGroup(g)}
+                onClick={() => { setGroup(g); setSelectedProduct(null); }}
                 className="p-4 text-left border-r last:border-r-0 transition-colors"
                 style={{ background: active ? "var(--accent-red-soft)" : "transparent", borderColor: "var(--border-color)" }}
               >
@@ -196,6 +212,10 @@ function ProductSizeContent() {
           </div>
         </div>
 
+        <div className="text-[11px] mb-2" style={{ color: "var(--text-secondary)" }}>
+          Click a product row for its insights below, or click a size cell for the return-reason breakdown of that variant.
+        </div>
+
         <div className="overflow-x-auto overflow-y-auto max-h-[520px]">
           <table className="w-full text-[11px]">
             <thead className="sticky top-0 z-10">
@@ -209,29 +229,48 @@ function ProductSizeContent() {
             </thead>
             <tbody>
               <AnimatePresence>
-                {filtered.map((row, i) => (
-                  <motion.tr key={row.product + i} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
-                    <td className="px-3 py-2 font-medium" style={{ color: "var(--accent-red)" }}>{row.product}</td>
-                    {sizeCols.map((c) => {
-                      const v = row[c] as number | undefined;
-                      return (
-                        <td key={c} className="px-1 py-1 text-center">
-                          {v ? (
-                            <motion.div
-                              initial={{ opacity: 0, scale: 0.8 }}
-                              animate={{ opacity: 1, scale: 1 }}
-                              className="inline-flex items-center justify-center min-w-[36px] py-1 rounded font-bold tabular-nums"
-                              style={{ background: heatColor(v, max), color: v / max > 0.5 ? "#fff" : "#5d4037" }}
-                            >
-                              {v}
-                            </motion.div>
-                          ) : <span style={{ color: "var(--text-muted)" }}>—</span>}
-                        </td>
-                      );
-                    })}
-                    <td className="px-2 py-1 text-center font-bold tabular-nums">{(row.total as number).toLocaleString()}</td>
-                  </motion.tr>
-                ))}
+                {filtered.map((row, i) => {
+                  const isSelected = selectedProduct === row.product;
+                  return (
+                    <motion.tr
+                      key={row.product + i}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: i * 0.02 }}
+                      onClick={() => setSelectedProduct(isSelected ? null : row.product)}
+                      className="cursor-pointer transition-colors"
+                      style={{ background: isSelected ? "var(--accent-red-soft)" : undefined }}
+                      title="Click to view product insights"
+                    >
+                      <td className="px-3 py-2 font-medium" style={{ color: "var(--accent-red)" }}>
+                        {isSelected ? "▸ " : ""}{row.product}
+                      </td>
+                      {sizeCols.map((c) => {
+                        const v = row[c] as number | undefined;
+                        return (
+                          <td key={c} className="px-1 py-1 text-center">
+                            {v ? (
+                              <motion.div
+                                initial={{ opacity: 0, scale: 0.8 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSizeCellPick({ product: row.product, size: c });
+                                }}
+                                className="inline-flex items-center justify-center min-w-[36px] py-1 rounded font-bold tabular-nums cursor-pointer transition hover:brightness-110 hover:ring-2"
+                                style={{ background: heatColor(v, max), color: v / max > 0.5 ? "#fff" : "#5d4037" }}
+                                title={`Click to see return reasons for size ${c}`}
+                              >
+                                {v}
+                              </motion.div>
+                            ) : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                          </td>
+                        );
+                      })}
+                      <td className="px-2 py-1 text-center font-bold tabular-nums">{(row.total as number).toLocaleString()}</td>
+                    </motion.tr>
+                  );
+                })}
                 {filtered.length === 0 && !heatLoading && (
                   <tr><td colSpan={sizeCols.length + 2} className="px-3 py-8 text-center text-[12px]" style={{ color: "var(--text-muted)" }}>No data for selected range and group</td></tr>
                 )}
@@ -240,6 +279,25 @@ function ProductSizeContent() {
           </table>
         </div>
       </div>
+
+      {/* Product-level insights (visible when a product row is clicked) */}
+      {selectedProduct && (
+        <ProductInsightsPanel
+          product={selectedProduct}
+          color={GROUP_COLORS[group] ?? "var(--accent-red)"}
+          heatmapRaw={heatmapRaw}
+          onClose={() => setSelectedProduct(null)}
+        />
+      )}
+
+      {/* Per-(product, size) return-reasons modal (opens when a size cell is clicked) */}
+      <ProductSizeReasonsModal
+        product={sizeCellPick?.product ?? null}
+        size={sizeCellPick?.size ?? null}
+        color={GROUP_COLORS[group] ?? "var(--accent-red)"}
+        heatmapRaw={heatmapRaw}
+        onClose={() => setSizeCellPick(null)}
+      />
 
       {/* Return Reasons + Product Category */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

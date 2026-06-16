@@ -65,7 +65,8 @@ function OverviewContent() {
     .map((r) => ({
       date: r.date,
       triggered: r.total_triggered,
-      connected: r.full_completion + r.partial_completion + r.cpnf,
+      full: r.full_completion,
+      partial: r.partial_completion,
     }));
 
   const t = totals ?? {
@@ -128,7 +129,7 @@ function OverviewContent() {
       </div>
 
       {/* Charts row 1 */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ChartCard title="OUTCOMES" subtitle="Distribution of call outcomes">
           <ZoomableChart baseHeight={400}>
             {(h) => (
@@ -165,30 +166,31 @@ function OverviewContent() {
             )}
           </ZoomableChart>
         </ChartCard>
-
-        <ChartCard title="TOP 10 PRODUCTS" subtitle="By return count">
-          <ZoomableChart baseHeight={400}>
-            {(h) => (
-              <ResponsiveContainer width="100%" height={h}>
-                <BarChart data={prodData} layout="vertical" margin={{ left: 10, right: 24, top: 4, bottom: 4 }} barCategoryGap="22%">
-                  <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
-                  <YAxis
-                    type="category"
-                    dataKey="name"
-                    tick={{ fontSize: 12, fill: "var(--text-primary)", fontWeight: 500 }}
-                    width={200}
-                    tickFormatter={(v: string) => (v.length > 26 ? v.slice(0, 24) + "…" : v)}
-                  />
-                  <Tooltip formatter={(v: number) => v.toLocaleString()} />
-                  <Bar dataKey="count" radius={[0, 4, 4, 0]} animationDuration={900}>
-                    {prodData.map((_, i) => <Cell key={i} fill={i === 0 ? "var(--accent-pink)" : "var(--accent-red)"} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </ZoomableChart>
-        </ChartCard>
       </div>
+
+      {/* Top products — full width so names render in full */}
+      <ChartCard title="TOP 10 PRODUCTS" subtitle="By return count">
+        <ZoomableChart baseHeight={400}>
+          {(h) => (
+            <ResponsiveContainer width="100%" height={h}>
+              <BarChart data={prodData} layout="vertical" margin={{ left: 10, right: 24, top: 4, bottom: 4 }} barCategoryGap="22%">
+                <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
+                <YAxis
+                  type="category"
+                  dataKey="name"
+                  tick={{ fontSize: 12, fill: "var(--text-primary)", fontWeight: 500 }}
+                  width={Math.min(560, Math.max(220, (prodData.reduce((m, p) => Math.max(m, p.name.length), 0)) * 7 + 16))}
+                  interval={0}
+                />
+                <Tooltip formatter={(v: number) => v.toLocaleString()} />
+                <Bar dataKey="count" radius={[0, 4, 4, 0]} animationDuration={900}>
+                  {prodData.map((_, i) => <Cell key={i} fill={i === 0 ? "var(--accent-pink)" : "var(--accent-red)"} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ZoomableChart>
+      </ChartCard>
 
       {/* Charts row 2 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -238,7 +240,7 @@ function OverviewContent() {
           </ZoomableChart>
         </ChartCard>
 
-        <ChartCard title="DAILY TRIGGERED VS CONNECTED" subtitle="Per-day comparison">
+        <ChartCard title="DAILY TRIGGERED VS FULL VS PARTIAL" subtitle="Per-day comparison">
           <ZoomableChart baseHeight={260}>
             {(h) => (
               <ResponsiveContainer width="100%" height={h}>
@@ -248,8 +250,9 @@ function OverviewContent() {
                   <YAxis tick={{ fontSize: 10, fill: "var(--text-muted)" }} />
                   <Tooltip formatter={(v: number) => v.toLocaleString()} />
                   <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
-                  <Line type="monotone" dataKey="triggered" name="Triggered" stroke="var(--accent-red)"  strokeWidth={2} dot={{ r: 2 }} animationDuration={900} />
-                  <Line type="monotone" dataKey="connected" name="Connected" stroke="var(--accent-blue)" strokeWidth={2} dot={{ r: 2 }} animationDuration={900} />
+                  <Line type="monotone" dataKey="triggered" name="Triggered" stroke="var(--accent-red)"   strokeWidth={2} dot={{ r: 2 }} animationDuration={900} />
+                  <Line type="monotone" dataKey="full"      name="Full"      stroke="var(--accent-teal)"  strokeWidth={2} dot={{ r: 2 }} animationDuration={900} />
+                  <Line type="monotone" dataKey="partial"   name="Partial"   stroke="#ef9a9a"             strokeWidth={2} dot={{ r: 2 }} animationDuration={900} />
                 </LineChart>
               </ResponsiveContainer>
             )}
